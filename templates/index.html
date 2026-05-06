@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>EV Charging Queue</title>
+<style>
+  :root { font-family: system-ui, sans-serif; }
+  body { max-width: 640px; margin: 2rem auto; padding: 0 1rem; color: #1a1a1a; }
+  h1 { margin-bottom: 1.5rem; }
+  .queue { border: 1px solid #ddd; border-radius: 8px; padding: 1rem; background: #fafafa; }
+  form { display: flex; gap: 0.5rem; margin-bottom: 1rem; }
+  input[type=text] { flex: 1; padding: 0.5rem; border: 1px solid #ccc; border-radius: 4px; font-size: 1rem; }
+  button { padding: 0.5rem 1rem; border: 0; border-radius: 4px; background: #2563eb; color: white; font-size: 1rem; cursor: pointer; }
+  button:hover { background: #1d4ed8; }
+  button.leave { background: #dc2626; padding: 0.25rem 0.5rem; font-size: 0.85rem; }
+  button.leave:hover { background: #b91c1c; }
+  button.charge { background: #16a34a; padding: 0.25rem 0.5rem; font-size: 0.85rem; }
+  button.charge:hover { background: #15803d; }
+  button.charge.on { background: #f59e0b; }
+  button.charge.on:hover { background: #d97706; }
+  ol { padding-left: 1.5rem; margin: 0; }
+  li { padding: 0.4rem 0; display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; }
+  li.mine .name { font-weight: 600; }
+  li.charging { background: #fef3c7; border-radius: 4px; padding: 0.4rem 0.5rem; margin: 0.1rem -0.5rem; }
+  .badge { display: inline-block; background: #f59e0b; color: white; font-size: 0.7rem; padding: 0.1rem 0.4rem; border-radius: 10px; margin-left: 0.4rem; vertical-align: middle; }
+  .remaining { color: #666; font-size: 0.8rem; margin-right: 0.5rem; }
+  .empty { color: #888; font-style: italic; }
+  .err { color: #b91c1c; font-size: 0.9rem; min-height: 1.2em; }
+  .actions { display: flex; gap: 0.25rem; }
+</style>
+</head>
+<body>
+<h1>EV Charging Queue</h1>
+<div class="queue">
+  <form id="join-form">
+    <input type="text" name="name" placeholder="Your name" maxlength="60" autocomplete="off" required>
+    <button type="submit">Join Queue</button>
+  </form>
+  <div class="err" id="err"></div>
+  <ol id="list"></ol>
+</div>
+
+<script>
+function fmtRemaining(sec) {
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  return h > 0 ? `${h}h ${m}m left` : `${m}m left`;
+}
+
+async function refresh() {
+  const res = await fetch("/api/queue");
+  if (!res.ok) return;
+  const data = await res.json();
+  const list = document.getElementById("list");
+  list.innerHTML = "";
+  if (data.length === 0) {
+    const li = document.createElement("li");
+    li.className = "empty";
+    li.textContent = "Queue empty";
+    list.appendChild(li);
+    return;
+  }
+  for (const entry of data) {
+    const li = document.createElement("li");
+    const classes = [];
+    if (entry.mine) classes.push("mine");
+    if (entry.charging) classes.push("charging");
+    li.className = classes.join(" ");
+
+    const nameSpan = document.createElement("span");
+    nameSpan.className = "name";
+    nameSpan.textContent = entry.name + (entry.mine ? " (you)" : "");
+    if (entry.charging) {
+      const badge = document.createElement("span");
+      badge.className = "badge";
+      badge.textContent = "charging";
+      nameSpan.appendChild(badge);
+    }
+    li.appendChild(nameSpan);
+
+    const right = document.createElement("span");
+    const rem = document.createElement("span");
+    rem.className = "remaining";
+    rem.textContent = fmtRemaining(entry.seconds_remaining);
+    right.appendChild(rem);
+
+    if (entry.mine) {
+      const actions = document.createElement("span");
+      actions.className = "actions";
+
+      const chargeBtn = document.createElement("button");
+      chargeBtn.className = "charge" + (entry.charging ? " on" : "");
+      chargeBtn.textContent = entry.charging ? "Stop charging" : "I'm charging";
+      chargeBtn.onclick = () => setCharging(entry.id, !entry.charging);
+      actions.appendChild(chargeBtn);
+
+      const leaveBtn = document.createElement("button");
+      leaveBtn.className = "leave";
+      leaveBtn.textContent = "Leave";
+      leaveBtn.onclick = () => leave(entry.id);
+      actions.appendChild(leaveBtn);
+
+      right.appendChild(actions);
+    }
+    li.appendChild(right);
+    list.appendChild(li);
+  }
+}
+
+async function join(name) {
+  const errEl = document.getElementById("err");
+  errEl.textContent = "";
+  const res = await fetch("/api/queue/join", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    errEl.textContent = data.error || "Failed to join";
+    return;
+  }
+  refresh();
+}
+
+async function leave(id) {
+  await fetch(`/api/queue/leave/${id}`, { method: "POST" });
+  refresh();
+}
+
+async function setCharging(id, charging) {
+  await fetch(`/api/queue/charging/${id}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ charging }),
+  });
+  refresh();
+}
+
+const form = document.getElementById("join-form");
+const input = form.querySelector("input");
+form.addEventListener("submit", e => {
+  e.preventDefault();
+  const name = input.value.trim();
+  if (!name) return;
+  join(name);
+  input.value = "";
+});
+
+refresh();
+setInterval(refresh, 3000);
+</script>
+</body>
+</html>
